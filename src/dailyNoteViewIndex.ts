@@ -25,14 +25,13 @@ import {
     getAllDailyNotes,
     getDailyNote,
     createDailyNote,
+    getDateFromFile,
 } from "obsidian-daily-notes-interface";
 import { createUpDownNavigationExtension } from "./component/UpAndDownNavigate";
-// import { setActiveEditorExt } from "./component/SetActiveEditor";
 import { DAILY_NOTE_VIEW_TYPE, DailyNoteView } from "./dailyNoteView";
 
 export default class DailyNoteViewPlugin extends Plugin {
     private view: DailyNoteView;
-    lastActiveFile: TFile;
     private lastCheckedDay: string;
 
     settings: DailyNoteSettings;
@@ -53,7 +52,6 @@ export default class DailyNoteViewPlugin extends Plugin {
                     app: this.app,
                     plugin: this,
                 }),
-                // setActiveEditorExt({ app: this.app, plugin: this }),
             ]);
 
         this.registerView(
@@ -84,8 +82,15 @@ export default class DailyNoteViewPlugin extends Plugin {
                         .length > 0
                 )
                     return;
-                // Then open the Daily Notes Editor
-                await this.openDailyNoteEditor();
+                // Open the Daily Notes Editor and scroll to today's note
+                const currentDate = moment();
+                const allDailyNotes = getAllDailyNotes();
+                const todayNote = getDailyNote(currentDate, allDailyNotes);
+                if (todayNote) {
+                    await this.openDailyNoteEditorWithTarget(todayNote.path);
+                } else {
+                    await this.openDailyNoteEditor();
+                }
             });
         }
 
@@ -105,6 +110,7 @@ export default class DailyNoteViewPlugin extends Plugin {
                 });
             }
         });
+
     }
 
     onunload() {
@@ -144,6 +150,36 @@ export default class DailyNoteViewPlugin extends Plugin {
         view.setTimeField(timeField);
 
         workspace.revealLeaf(leaf);
+    }
+
+    async openDailyNoteEditorWithTarget(filePath: string) {
+        const workspace = this.app.workspace;
+        const leaves = workspace.getLeavesOfType(DAILY_NOTE_VIEW_TYPE);
+        let leaf: WorkspaceLeaf;
+
+        if (leaves.length > 0) {
+            leaf = leaves[0];
+        } else {
+            leaf = workspace.getLeaf(true);
+            await leaf.setViewState({ type: DAILY_NOTE_VIEW_TYPE });
+        }
+
+        workspace.revealLeaf(leaf);
+
+        // Wait for view to be ready, then scroll
+        if (leaf.view instanceof DailyNoteView && typeof leaf.view.scrollToFile === 'function') {
+            leaf.view.setSelectionMode("daily");
+            leaf.view.scrollToFile(filePath);
+        } else {
+            // Fallback: wait for layout ready then try again
+            workspace.onLayoutReady(() => {
+                const view = leaf.view as DailyNoteView;
+                if (view && typeof view.scrollToFile === 'function') {
+                    view.setSelectionMode("daily");
+                    view.scrollToFile(filePath);
+                }
+            });
+        }
     }
 
     async ensureTodaysDailyNoteExists() {
@@ -256,6 +292,7 @@ export default class DailyNoteViewPlugin extends Plugin {
 
     // Used for patch workspaceleaf pinned behaviors
     patchWorkspaceLeaf() {
+        const plugin = this;
         this.register(
             around(WorkspaceLeaf.prototype, {
                 getRoot(old) {
@@ -275,6 +312,16 @@ export default class DailyNoteViewPlugin extends Plugin {
                 },
                 openFile(old) {
                     return function (file: TFile, openState?: OpenViewState) {
+                        // Check if this is a daily note and not an embedded leaf
+                        if (!isDailyNoteLeaf(this)) {
+                            const fileDate = getDateFromFile(file as any, "day");
+                            if (fileDate) {
+                                // This is a daily note - open in timeline view instead
+                                plugin.openDailyNoteEditorWithTarget(file.path);
+                                return;
+                            }
+                        }
+
                         if (isDailyNoteLeaf(this)) {
                             setTimeout(
                                 around(Workspace.prototype, {
@@ -333,7 +380,6 @@ export default class DailyNoteViewPlugin extends Plugin {
 
         if (currentDay !== this.lastCheckedDay) {
             this.lastCheckedDay = currentDay;
-            console.log("Day changed, updating daily notes view");
 
             await this.ensureTodaysDailyNoteExists();
 

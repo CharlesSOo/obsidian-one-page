@@ -10,14 +10,10 @@ import {
     App,
     ButtonComponent,
 } from "obsidian";
+import { FolderSuggest } from "./suggesters/FolderSuggest";
 import { TimeRange, TimeField } from "./types/time";
 import DailyNoteEditorView from "./component/DailyNoteEditorView.svelte";
 export const DAILY_NOTE_VIEW_TYPE = "daily-note-editor-view";
-
-export function isEmebeddedLeaf(leaf: WorkspaceLeaf) {
-    // Work around missing enhance.js API by checking match condition instead of looking up parent
-    return (leaf as any).containerEl.matches(".dn-leaf-view");
-}
 
 export class DailyNoteView extends ItemView {
     view: DailyNoteEditorView;
@@ -28,6 +24,7 @@ export class DailyNoteView extends ItemView {
     selectionMode: "daily" | "folder" | "tag" = "daily";
     target: string = "";
     timeField: TimeField = "mtime";
+    pendingTargetFile: string | null = null;
 
     customRange: {
         start: Date;
@@ -139,44 +136,55 @@ export class DailyNoteView extends ItemView {
     async setState(state: unknown, result?: any): Promise<void> {
         await super.setState(state, result);
         // Handle our custom state properties if they exist
-        if (state && typeof state === "object" && !this.view) {
+        if (state && typeof state === "object") {
             const customState = state as {
                 selectionMode?: "daily" | "folder" | "tag";
                 target?: string;
                 timeField?: TimeField;
                 selectedRange?: TimeRange;
                 customRange?: { start: Date; end: Date } | null;
+                targetFile?: string;
             };
 
-            if (customState.selectionMode)
-                this.selectionMode = customState.selectionMode;
-            if (customState.target) this.target = customState.target;
-            if (customState.timeField) this.timeField = customState.timeField;
-            if (customState.selectedRange)
-                this.selectedDaysRange = customState.selectedRange;
-            if (customState.customRange)
-                this.customRange = customState.customRange;
+            if (!this.view) {
+                // New view - create Svelte component
+                if (customState.selectionMode)
+                    this.selectionMode = customState.selectionMode;
+                if (customState.target) this.target = customState.target;
+                if (customState.timeField) this.timeField = customState.timeField;
+                if (customState.selectedRange)
+                    this.selectedDaysRange = customState.selectedRange;
+                if (customState.customRange)
+                    this.customRange = customState.customRange;
 
-            this.view = new DailyNoteEditorView({
-                target: this.contentEl,
-                props: {
-                    plugin: this.plugin,
-                    leaf: this.leaf,
-                    selectedRange: this.selectedDaysRange,
-                    customRange: this.customRange,
-                    selectionMode: this.selectionMode,
-                    target: this.target,
-                    timeField: this.timeField,
-                },
-            });
+                this.view = new DailyNoteEditorView({
+                    target: this.contentEl,
+                    props: {
+                        plugin: this.plugin,
+                        leaf: this.leaf,
+                        selectedRange: this.selectedDaysRange,
+                        customRange: this.customRange,
+                        selectionMode: this.selectionMode,
+                        target: this.target,
+                        timeField: this.timeField,
+                        targetFile: customState.targetFile || null,
+                    },
+                });
 
-            this.app.workspace.onLayoutReady(this.view.tick.bind(this));
+                this.app.workspace.onLayoutReady(this.view.refresh.bind(this.view));
 
-            this.registerInterval(
-                window.setInterval(async () => {
-                    this.view.check();
-                }, 1000 * 60 * 60)
-            );
+                this.registerInterval(
+                    window.setInterval(async () => {
+                        this.view.check();
+                    }, 1000 * 60 * 60)
+                );
+            }
+
+            // After view is created, check for pending scroll target
+            if (this.view && this.pendingTargetFile) {
+                this.view.$set({ targetFile: this.pendingTargetFile });
+                this.pendingTargetFile = null;
+            }
         }
     }
 
@@ -189,6 +197,15 @@ export class DailyNoteView extends ItemView {
 
     openDailyNoteEditor() {
         this.plugin.openDailyNoteEditor();
+    }
+
+    scrollToFile(filePath: string) {
+        if (this.view) {
+            this.view.$set({ targetFile: filePath });
+        } else {
+            // Svelte component not ready - store for later
+            this.pendingTargetFile = filePath;
+        }
     }
 
     async onOpen(): Promise<void> {
@@ -290,18 +307,6 @@ export class DailyNoteView extends ItemView {
             menu.showAtMouseEvent(e);
         });
 
-        // Add "Save as Preset" button when in folder or tag mode
-        // this.addAction("bookmark", "Save as preset", (e) => {
-        //     // Only enable for folder and tag modes with a target
-        //     if (this.selectionMode !== "daily" && this.target) {
-        //         this.saveCurrentSelectionAsPreset();
-        //         // Show a small notification
-        //         new Notice("Preset saved");
-        //     }
-        // });
-
-        // Add action for selecting time field (for folder and tag modes)
-
         this.addAction("calendar-range", "Select date range", (e) => {
             const menu = new Menu();
             // Add range selection options
@@ -347,7 +352,7 @@ export class DailyNoteView extends ItemView {
                 this.view.check();
 
                 // Update the view to get the latest files
-                this.view.tick();
+                this.view.refresh();
 
                 // Force a refresh of the file list
                 this.view.$set({
@@ -392,7 +397,7 @@ export class DailyNoteView extends ItemView {
                 this.view.check();
 
                 // Update the view to get the latest files
-                this.view.tick();
+                this.view.refresh();
 
                 // Force a refresh of the file list
                 this.view.$set({
@@ -538,6 +543,11 @@ class SelectTargetModal extends Modal {
             value: "",
         });
         this.targetInput.addClass("target-input");
+
+        // Add folder autocomplete for folder mode using Obsidian's standard API
+        if (this.mode === "folder") {
+            new FolderSuggest(this.app, this.targetInput);
+        }
 
         const footerEl = contentEl.createDiv();
         footerEl.addClass("modal-button-container");

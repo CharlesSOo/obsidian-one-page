@@ -6,7 +6,7 @@
     import DailyNote from "./DailyNote.svelte";
     import { inview } from "svelte-inview";
     import { TimeRange, SelectionMode, TimeField } from "../types/time";
-    import { onMount } from "svelte";
+    import { onMount, tick } from "svelte";
     import { FileManager, FileManagerOptions } from "../utils/fileManager";
 
 
@@ -17,7 +17,8 @@
     export let selectionMode: SelectionMode = "daily";
     export let target: string = "";
     export let timeField: TimeField = "mtime"; // 默认使用修改时间
-    
+    export let targetFile: string | null = null;
+
     const size = 1;
     let intervalId;
 
@@ -26,6 +27,11 @@
     
     // Track which notes are in viewport
     let visibleNotes: Set<string> = new Set();
+
+    // Flag to pause visibility tracking during scroll operations
+    let isScrollingToTarget = false;
+    let scrollRequestId = 0;
+    let suppressOptionsSync = false;
 
     let hasMore = true;
     let firstLoaded = true;
@@ -43,7 +49,7 @@
         timeField: timeField
     } as FileManagerOptions;
 
-    $: if (fileManager && (selectedRange !== fileManager.options.timeRange || 
+    $: if (!suppressOptionsSync && fileManager && (selectedRange !== fileManager.options.timeRange || 
                           customRange !== fileManager.options.customRange ||
                           selectionMode !== fileManager.options.mode ||
                           target !== fileManager.options.target ||
@@ -73,9 +79,10 @@
         filteredFiles = fileManager.getFilteredFiles();
         hasMore = filteredFiles.length > 0;
         startFillViewport();
-        
+
         // Initialize the title element
         updateTitleElement();
+
     });
 
     // Function to update the title element with range information
@@ -128,6 +135,7 @@
     }
 
     function infiniteHandler() {
+        if (isScrollingToTarget) return;
         if (leaf.height === 0) return;
         if (!fileManager || !hasMore) return;
         if (filteredFiles.length === 0) {
@@ -184,10 +192,10 @@
         }
     }
 
-    export function tick() {
+    export function refresh() {
         // First check if we need to update for a new day
         check();
-        
+
         // Force a refresh of the view
         renderedFiles = renderedFiles;
     }
@@ -253,13 +261,163 @@
     
     // Handle note visibility change
     function handleNoteVisibilityChange(file: TFile, isVisible: boolean) {
-        console.log("inview", isVisible)
+        // Ignore visibility changes while scrolling to prevent editor load/unload jank
+        if (isScrollingToTarget) return;
+
         if (isVisible) {
             visibleNotes.add(file.path);
         } else {
             visibleNotes.delete(file.path);
         }
         visibleNotes = visibleNotes;
+    }
+
+    // Handle scrolling to a specific file
+    $: if (targetFile && fileManager) {
+        scrollToTargetFile(targetFile);
+    }
+
+    async function scrollToTargetFile(filePath: string) {
+        const requestId = ++scrollRequestId;
+
+        // Set flag to pause visibility tracking during scroll
+        isScrollingToTarget = true;
+
+        const clearScrollState = () => {
+            if (requestId !== scrollRequestId) return;
+            isScrollingToTarget = false;
+            targetFile = null;
+        };
+
+        const alreadyRendered = renderedFiles.find(f => f.path === filePath);
+        if (alreadyRendered) {
+            visibleNotes.add(filePath);
+            visibleNotes = visibleNotes;
+
+            await tick();
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            if (requestId !== scrollRequestId) return;
+
+            const escapedPath = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(filePath) : filePath.replace(/"/g, '\\"');
+            const el = leaf.view.contentEl.querySelector(`[data-path="${escapedPath}"]`);
+            if (el) {
+                const scrollContainer = leaf.view.contentEl;
+                const containerRect = scrollContainer.getBoundingClientRect();
+                const elRect = el.getBoundingClientRect();
+                const scrollTop = scrollContainer.scrollTop + (elRect.top - containerRect.top);
+
+                // Smooth scroll to target
+                scrollContainer.scrollTo({ top: scrollTop, behavior: 'smooth' });
+
+                // Wait for smooth scroll to complete before resuming visibility tracking
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+
+            clearScrollState();
+            return;
+        }
+
+        // Refresh filtered files to avoid relying on a spliced queue
+        filteredFiles = fileManager.filterFilesByRange();
+        hasMore = filteredFiles.length > 0;
+        firstLoaded = true;
+
+        // Check if file is in the filtered files
+        let allFiles = filteredFiles;
+        let targetIndex = allFiles.findIndex(f => f.path === filePath);
+
+        // If not found and in daily mode, reset filter to show all daily notes
+        if (targetIndex === -1 && selectionMode === "daily") {
+
+            // Update state synchronously - don't rely on reactive updates
+            suppressOptionsSync = true;
+            selectedRange = "all";
+
+            // Update fileManager directly with new options
+            fileManager.updateOptions({
+                timeRange: "all",
+                customRange: customRange,
+                mode: selectionMode,
+                target: target,
+                timeField: timeField
+            });
+
+            // Reset rendered state and get fresh file list
+            renderedFiles = [];
+            visibleNotes.clear();
+            filteredFiles = fileManager.getFilteredFiles();
+            hasMore = filteredFiles.length > 0;
+            firstLoaded = true;
+
+            // Now get the updated file list
+            allFiles = filteredFiles;
+            targetIndex = allFiles.findIndex(f => f.path === filePath);
+
+            // Update title
+            updateTitleElement();
+
+            await tick();
+            if (requestId !== scrollRequestId) {
+                suppressOptionsSync = false;
+                return;
+            }
+            suppressOptionsSync = false;
+        }
+
+        if (targetIndex === -1) {
+            // Still not found - abort
+            clearScrollState();
+            return;
+        }
+
+        // Don't reset - just load more files from where we left off
+        // Get fresh filtered list and remove already-rendered files to avoid duplicates
+        const alreadyRenderedPaths = new Set(renderedFiles.map(f => f.path));
+        filteredFiles = fileManager.getFilteredFiles().filter(f => !alreadyRenderedPaths.has(f.path));
+        hasMore = filteredFiles.length > 0;
+
+        // Load files until the target is rendered (append, don't reset)
+        while (!renderedFiles.find(f => f.path === filePath) && hasMore) {
+            // Load more files from filtered list
+            if (filteredFiles.length > 0) {
+                renderedFiles = [
+                    ...renderedFiles,
+                    ...filteredFiles.splice(0, size)
+                ];
+            } else {
+                hasMore = false;
+            }
+            // Small delay to let DOM update
+            await new Promise(resolve => setTimeout(resolve, 10));
+            if (requestId !== scrollRequestId) return;
+        }
+
+        // Pre-mark the target file as visible so its editor loads
+        visibleNotes.add(filePath);
+        visibleNotes = visibleNotes;
+
+        // Wait for DOM and editor to load
+        await tick();
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        if (requestId !== scrollRequestId) return;
+
+        // Find and scroll to the element within this view
+        const escapedPath = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(filePath) : filePath.replace(/"/g, '\\"');
+        const el = leaf.view.contentEl.querySelector(`[data-path="${escapedPath}"]`);
+        if (el) {
+            const scrollContainer = leaf.view.contentEl;
+            const containerRect = scrollContainer.getBoundingClientRect();
+            const elRect = el.getBoundingClientRect();
+            const scrollTop = scrollContainer.scrollTop + (elRect.top - containerRect.top);
+
+            // Smooth scroll to target
+            scrollContainer.scrollTo({ top: scrollTop, behavior: 'smooth' });
+
+            // Wait for smooth scroll to complete before resuming visibility tracking
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        clearScrollState();
     }
 </script>
 
@@ -279,7 +437,7 @@
         </div>
     {/if}
     {#each renderedFiles as file (file.path)}
-        <div class="daily-note-wrapper" use:inview={{
+        <div class="daily-note-wrapper" data-path={file.path} use:inview={{
             rootMargin: "80%",
             unobserveOnEnter: false,
             root: leaf.view.contentEl

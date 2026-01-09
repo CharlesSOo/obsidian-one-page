@@ -1,5 +1,6 @@
 import DailyNoteViewPlugin from "./dailyNoteViewIndex";
 import { App, debounce, PluginSettingTab, Setting, Modal } from "obsidian";
+import { FolderSuggest } from "./suggesters/FolderSuggest";
 
 export interface DailyNoteSettings {
     hideFrontmatter: boolean;
@@ -190,6 +191,7 @@ class AddPresetModal extends Modal {
     saveCallback: (type: "folder" | "tag", target: string) => void;
     type: "folder" | "tag" = "folder";
     targetInput: HTMLInputElement;
+    folderSuggest: FolderSuggest | null = null;
 
     constructor(
         app: App,
@@ -260,12 +262,14 @@ class AddPresetModal extends Modal {
         folderRadio.addEventListener("change", () => {
             if (folderRadio.checked) {
                 this.type = "folder";
+                this.setupFolderSuggest();
             }
         });
 
         tagRadio.addEventListener("change", () => {
             if (tagRadio.checked) {
                 this.type = "tag";
+                this.destroyFolderSuggest();
             }
         });
 
@@ -296,6 +300,9 @@ class AddPresetModal extends Modal {
         });
         this.targetInput.addClass("target-input");
 
+        // Setup folder autocomplete by default (since folder is selected by default)
+        this.setupFolderSuggest();
+
         const footerEl = contentEl.createDiv();
         footerEl.addClass("modal-button-container");
 
@@ -325,6 +332,19 @@ class AddPresetModal extends Modal {
             });
     }
 
+    setupFolderSuggest() {
+        if (!this.folderSuggest) {
+            this.folderSuggest = new FolderSuggest(this.app, this.targetInput);
+        }
+    }
+
+    destroyFolderSuggest() {
+        if (this.folderSuggest) {
+            this.folderSuggest.close();
+            this.folderSuggest = null;
+        }
+    }
+
     save() {
         const target = this.targetInput.value.trim();
         if (target) {
@@ -334,6 +354,7 @@ class AddPresetModal extends Modal {
     }
 
     onClose() {
+        this.destroyFolderSuggest();
         const { contentEl } = this;
         contentEl.empty();
     }

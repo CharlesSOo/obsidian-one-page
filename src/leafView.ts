@@ -75,9 +75,6 @@ export class DailyNoteEditor extends nosuper(HoverPopover) {
     titleEl: HTMLElement;
     containerEl: HTMLElement;
 
-    // It is currently not useful.
-    // leafInHoverEl: WorkspaceLeaf;
-
     oldPopover = this.parent?.DailyNoteEditor;
     document: Document;
 
@@ -182,7 +179,6 @@ export class DailyNoteEditor extends nosuper(HoverPopover) {
     }
 
     getDefaultMode() {
-        // return this.parent?.view?.getMode ? this.parent.view.getMode() : "source";
         return "source";
     }
 
@@ -334,8 +330,6 @@ export class DailyNoteEditor extends nosuper(HoverPopover) {
     }
 
     shouldShowSelf() {
-        // Don't let obsidian show() us if we've already started closing
-        // return !this.detaching && (this.onTarget || this.onHover);
         return (
             !this.detaching &&
             !!(
@@ -354,9 +348,6 @@ export class DailyNoteEditor extends nosuper(HoverPopover) {
             this.targetEl.appendChild(this.hoverEl);
             this.onShow();
             this.plugin.app.workspace.onLayoutChange();
-            // initializingHoverPopovers.remove(this);
-            // activeHoverPopovers.push(this);
-            // initializePopoverChecker();
             this.load();
         } else {
             this.hide();
@@ -405,15 +396,12 @@ export class DailyNoteEditor extends nosuper(HoverPopover) {
         // will call us again when it finishes.
         if (this.opening) return;
 
-        // Leave this code here to observe the state of the leaves
         const leaves = this.leaves();
         if (leaves.length) {
             // Detach all leaves before we unload the popover and remove it from the DOM.
             // Each leaf.detach() will trigger layout-changed and the updateLeaves()
             // method will then call hide() again when the last one is gone.
-            // leaves[0].detach();
             leaves[0].detach();
-            // this.targetEl.empty();
         } else {
             this.parent = null;
             this.abortController?.unload();
@@ -451,13 +439,11 @@ export class DailyNoteEditor extends nosuper(HoverPopover) {
         }
 
         if (!file) {
-            // this.displayCreateFileAction(linkText, sourcePath, eState);
             return;
         }
         const {viewRegistry} = this.plugin.app;
         const viewType = viewRegistry.typeByExtension[file.extension];
         if (!viewType || !viewRegistry.viewByType[viewType]) {
-            // this.displayOpenFileAction(file);
             return;
         }
 
@@ -466,7 +452,6 @@ export class DailyNoteEditor extends nosuper(HoverPopover) {
         const state = this.buildState(parentMode, eState);
         const leaf = await this.openFile(file, state as OpenViewState, createInLeaf);
         const leafViewType = leaf?.view?.getViewType();
-        // console.log(leaf);
         if (leafViewType === "image") {
             // TODO: temporary workaround to prevent image popover from disappearing immediately when using live preview
             if (
