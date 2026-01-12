@@ -80,7 +80,14 @@
             createdLeaf.parentLeaf = leaf;
 
             rendered = true;
-            
+
+            // Add click handler to native inline-title for opening in new pane
+            const inlineTitle = editorEl.querySelector(".inline-title");
+            if (inlineTitle) {
+                inlineTitle.style.cursor = "pointer";
+                inlineTitle.addEventListener("click", handleFileIconClick);
+            }
+
             // Set a small timeout to allow the editor to render completely
             const timeout = window.setTimeout(() => {
                 if (createdLeaf && containerEl) {
@@ -162,13 +169,6 @@
 
 <div class="daily-note-container" data-id='dn-editor-{file.path}' bind:this={containerEl} style="min-height: {editorHeight}px;">
     <div class="daily-note">
-        {#if title}
-            <div class="daily-note-title inline-title">
-                <!-- svelte-ignore a11y-interactive-supports-focus -->
-                <!-- svelte-ignore a11y-click-events-have-key-events -->
-                <span role="link" class="clickable-link" on:click={handleFileIconClick} data-title={title}>{title}</span>
-            </div>
-        {/if}
         <div class="daily-note-editor" bind:this={editorEl} data-title={title} on:click={handleEditorClick}>
             {#if !rendered && shouldRender}
                 <div class="editor-placeholder">Loading...</div>
@@ -188,16 +188,6 @@
 
     .daily-note-editor {
         min-height: 100px;
-    }
-
-    .clickable-link {
-        cursor: pointer;
-        text-decoration: none;
-    }
-
-    .clickable-link:hover {
-        color: var(--color-accent);
-        text-decoration: underline;
     }
 
     .editor-placeholder {

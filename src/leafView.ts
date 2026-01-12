@@ -299,9 +299,8 @@ export class DailyNoteEditor extends nosuper(HoverPopover) {
         const sizer = this.hoverEl.querySelector(".workspace-leaf");
         if (sizer) this.hoverEl.appendChild(sizer);
 
-        // Remove original inline tilte;
-        const inlineTitle = this.hoverEl.querySelector(".inline-title");
-        if (inlineTitle) inlineTitle.remove();
+        // Keep inline-title but make it clickable to open in new pane
+        // (removed: was deleting inline-title and replacing with custom one)
 
         this.onShowCallback?.();
         this.onShowCallback = undefined; // only call it once
