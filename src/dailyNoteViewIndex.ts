@@ -25,7 +25,6 @@ import {
     getAllDailyNotes,
     getDailyNote,
     createDailyNote,
-    getDateFromFile,
 } from "obsidian-daily-notes-interface";
 import { createUpDownNavigationExtension } from "./component/UpAndDownNavigate";
 import { DAILY_NOTE_VIEW_TYPE, DailyNoteView } from "./dailyNoteView";
@@ -312,16 +311,6 @@ export default class DailyNoteViewPlugin extends Plugin {
                 },
                 openFile(old) {
                     return function (file: TFile, openState?: OpenViewState) {
-                        // Check if this is a daily note and not an embedded leaf
-                        if (!isDailyNoteLeaf(this)) {
-                            const fileDate = getDateFromFile(file as any, "day");
-                            if (fileDate) {
-                                // This is a daily note - open in timeline view instead
-                                plugin.openDailyNoteEditorWithTarget(file.path);
-                                return;
-                            }
-                        }
-
                         if (isDailyNoteLeaf(this)) {
                             setTimeout(
                                 around(Workspace.prototype, {
