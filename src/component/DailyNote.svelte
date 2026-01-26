@@ -1,6 +1,6 @@
 <script lang="ts">
     import type DailyNoteViewPlugin from "../dailyNoteViewIndex";
-    import { MarkdownView, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
+    import { MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, moment } from "obsidian";
     import { spawnLeafView } from "../leafView";
     import { onDestroy, onMount } from "svelte";
 
@@ -92,7 +92,7 @@
             const timeout = window.setTimeout(() => {
                 if (createdLeaf && containerEl) {
                     // Get the actual height of the editor content
-                    if(!(createdLeaf.view instanceof MarkdownView)) return; 
+                    if(!(createdLeaf.view instanceof MarkdownView)) return;
                     // @ts-ignore
                     const actualHeight = createdLeaf.view.editMode?.editor?.cm?.dom.innerHeight;
                     if (actualHeight > 0) {
@@ -101,6 +101,16 @@
                         containerEl.style.minHeight = `${editorHeight}px`;
 
                         window.clearTimeout(timeout);
+                    }
+
+                    // Format the title as "Mon, January 26th, 2026" if it's a date
+                    const inlineTitleEl = editorEl.querySelector(".inline-title");
+                    if (inlineTitleEl) {
+                        const dateMatch = title?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                        if (dateMatch) {
+                            const formattedDate = moment(title).format("ddd, MMMM Do, YYYY");
+                            inlineTitleEl.textContent = formattedDate;
+                        }
                     }
                 }
             }, 400);
